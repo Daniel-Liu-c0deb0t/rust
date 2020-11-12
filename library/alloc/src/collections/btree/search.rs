@@ -48,7 +48,7 @@ where
     Q: Ord,
     K: Borrow<Q>,
 {
-    match search_linear(&node, key) {
+    match search_skip(&node, key) {
         (idx, true) => Found(unsafe { Handle::new_kv(node, idx) }),
         (idx, false) => SearchResult::GoDown(unsafe { Handle::new_edge(node, idx) }),
     }
@@ -59,6 +59,71 @@ where
 /// exist in the node itself, it may exist in the subtree with that index
 /// (if the node has subtrees). If the key doesn't exist in node or subtree,
 /// the returned index is the position or subtree where the key belongs.
+/// This uses a skipping algorithm for better performance than linear search.
+#[allow(dead_code)]
+fn search_skip<BorrowType, K, V, Type, Q: ?Sized>(
+    node: &NodeRef<BorrowType, K, V, Type>,
+    key: &Q,
+) -> (usize, bool)
+where
+    Q: Ord,
+    K: Borrow<Q>,
+{
+    // This function is defined over all borrow types (immutable, mutable, owned).
+    // Using `keys_at()` is fine here even if BorrowType is mutable, as all we return
+    // is an index -- not a reference.
+    let len = node.len();
+    const STEP: usize = 3;
+    let mut hi = -1isize;
+    let mut less = false;
+    let mut res = (len, false);
+    // Scan once, skipping keys to save time.
+    // Ideally, the step amount should be the square root of `len`.
+    // TODO: while loop?
+    for i in ((STEP - 1)..len).step_by(STEP) {
+        hi = i as isize;
+        let k = unsafe { node.reborrow().key_at(i) };
+        match key.cmp(k.borrow()) {
+            Ordering::Greater => {},
+            Ordering::Equal => return (i, true),
+            Ordering::Less => {
+                less = true;
+                break;
+            }
+        }
+    }
+
+    let lo;
+
+    if less {
+        lo = (hi + 1) as usize - STEP;
+        res = (hi as usize, false);
+    } else {
+        lo = (hi + 1) as usize;
+        hi = len as isize;
+    }
+
+    // Scan the small range where the key should be.
+    // TODO: reversed?
+    for i in lo..hi as usize {
+        let k = unsafe { node.reborrow().key_at(i) };
+        match key.cmp(k.borrow()) {
+            Ordering::Greater => {},
+            Ordering::Equal => return (i, true),
+            Ordering::Less => return (i, false),
+        }
+    }
+
+    res
+}
+
+/// Returns the index in the node at which the key (or an equivalent) exists
+/// or could exist, and whether it exists in the node itself. If it doesn't
+/// exist in the node itself, it may exist in the subtree with that index
+/// (if the node has subtrees). If the key doesn't exist in node or subtree,
+/// the returned index is the position or subtree where the key belongs.
+/// This uses linear search.
+#[allow(dead_code)]
 fn search_linear<BorrowType, K, V, Type, Q: ?Sized>(
     node: &NodeRef<BorrowType, K, V, Type>,
     key: &Q,
