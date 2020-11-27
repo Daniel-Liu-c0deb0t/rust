@@ -36,7 +36,7 @@ use core::ptr::{self, NonNull, Unique};
 use crate::alloc::{AllocRef, Global, Layout};
 use crate::boxed::Box;
 
-const B: usize = 12;
+const B: usize = 6;
 pub const CAPACITY: usize = 2 * B - 1;
 pub const MIN_LEN_AFTER_SPLIT: usize = B - 1;
 const KV_IDX_CENTER: usize = B - 1;

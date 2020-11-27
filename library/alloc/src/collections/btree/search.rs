@@ -48,7 +48,7 @@ where
     Q: Ord,
     K: Borrow<Q>,
 {
-    match search_skip(&node, key) {
+    match search_bsiter(&node, key) {
         (idx, true) => Found(unsafe { Handle::new_kv(node, idx) }),
         (idx, false) => SearchResult::GoDown(unsafe { Handle::new_edge(node, idx) }),
     }
@@ -73,19 +73,23 @@ where
     // Using `keys_at()` is fine here even if BorrowType is mutable, as all we return
     // is an index -- not a reference.
     let len = node.len();
+
     let mut lo = 0;
     let mut hi = len;
     while lo < hi {
         let mid = (lo + hi) / 2;
         let k = unsafe { node.reborrow().key_at(mid) };
-        match key.cmp(k.borrow()) {
+        let mask = -((key <= k.borrow()) as isize) as usize;
+        lo = (mask & lo) | (!mask & (mid + 1));
+        hi = (mask & mid) | (!mask & hi);
+        /*match key.cmp(k.borrow()) {
             Ordering::Greater => lo = mid + 1,
             Ordering::Equal => return (mid, true),
             Ordering::Less => hi = mid,
-        }
+        }*/
     }
 
-    (lo, false)
+    (lo, lo < len && key == unsafe { node.reborrow().key_at(lo) }.borrow())
 }
 
 /// Returns the index in the node at which the key (or an equivalent) exists
@@ -107,7 +111,7 @@ where
     // Using `keys_at()` is fine here even if BorrowType is mutable, as all we return
     // is an index -- not a reference.
     let len = node.len();
-    const STEP: usize = 4;
+    const STEP: usize = 3;
     let mut lo = 0;
     let mut hi = STEP - 1;
     // Scan once, skipping keys to save time.
@@ -214,6 +218,75 @@ where
     } else {
         (res, false)
     }
+}
+
+/// Returns the index in the node at which the key (or an equivalent) exists
+/// or could exist, and whether it exists in the node itself. If it doesn't
+/// exist in the node itself, it may exist in the subtree with that index
+/// (if the node has subtrees). If the key doesn't exist in node or subtree,
+/// the returned index is the position or subtree where the key belongs.
+/// This uses one iteration of binary search.
+#[allow(dead_code)]
+fn search_bsiter<BorrowType, K, V, Type, Q: ?Sized>(
+    node: &NodeRef<BorrowType, K, V, Type>,
+    key: &Q,
+) -> (usize, bool)
+where
+    Q: Ord,
+    K: Borrow<Q>,
+{
+    // This function is defined over all borrow types (immutable, mutable, owned).
+    // Using `keys_at()` is fine here even if BorrowType is mutable, as all we return
+    // is an index -- not a reference.
+    let len = node.len();
+
+    let mid = len / 2;
+    let mid_k = unsafe { node.reborrow().key_at(mid) };
+    let cmp = key < mid_k.borrow();
+    let mask = -(cmp as isize) as usize;
+    let lo = !mask & mid;
+    let hi = (mask & mid) | (!mask & len);
+    //let lo = if cmp { 0 } else { mid };
+    //let hi = if cmp { mid } else { len };
+
+    for i in lo..hi {
+        let k = unsafe { node.reborrow().key_at(i) };
+        match key.cmp(k.borrow()) {
+            Ordering::Greater => {}
+            Ordering::Equal => return (i, true),
+            Ordering::Less => return (i, false),
+        }
+    }
+
+    (hi, false)
+
+    /*match key.cmp(mid_k.borrow()) {
+        Ordering::Greater => {
+            for i in (mid + 1)..len {
+                let k = unsafe { node.reborrow().key_at(i) };
+                match key.cmp(k.borrow()) {
+                    Ordering::Greater => {}
+                    Ordering::Equal => return (i, true),
+                    Ordering::Less => return (i, false),
+                }
+            }
+
+            (len, false)
+        },
+        Ordering::Equal => (mid, true),
+        Ordering::Less => {
+            for i in 0..mid {
+                let k = unsafe { node.reborrow().key_at(i) };
+                match key.cmp(k.borrow()) {
+                    Ordering::Greater => {}
+                    Ordering::Equal => return (i, true),
+                    Ordering::Less => return (i, false),
+                }
+            }
+
+            (mid, false)
+        },
+    }*/
 }
 
 /// Returns the index in the node at which the key (or an equivalent) exists
