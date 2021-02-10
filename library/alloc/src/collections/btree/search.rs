@@ -48,7 +48,7 @@ where
     Q: Ord,
     K: Borrow<Q>,
 {
-    match search_bsiter(&node, key) {
+    match search_linear(&node, key) {
         (idx, true) => Found(unsafe { Handle::new_kv(node, idx) }),
         (idx, false) => SearchResult::GoDown(unsafe { Handle::new_edge(node, idx) }),
     }
@@ -287,6 +287,39 @@ where
             (mid, false)
         },
     }*/
+}
+
+#[allow(dead_code)]
+fn search_monobound<BorrowType, K, V, Type, Q: ?Sized>(
+    node: &NodeRef<BorrowType, K, V, Type>,
+    key: &Q,
+) -> (usize, bool)
+where
+    Q: Ord,
+    K: Borrow<Q>,
+{
+    if node.len() == 0 {
+        return (0, false);
+    }
+    // This function is defined over all borrow types (immutable, mutable, owned).
+    // Using `keys_at()` is fine here even if BorrowType is mutable, as all we return
+    // is an index -- not a reference.
+    let mut lo = 0;
+    let mut hi = node.len();
+    while hi > 1 {
+        let mid = hi / 2;
+        let k = unsafe { node.reborrow().key_at(lo + mid) };
+        if key >= k.borrow() {
+            lo += mid;
+        }
+        hi -= mid;
+    }
+    let k = unsafe { node.reborrow().key_at(lo) };
+    match key.cmp(k.borrow()) {
+        Ordering::Greater => return (lo + 1, false),
+        Ordering::Equal => return (lo, true),
+        Ordering::Less => return (lo, false),
+    }
 }
 
 /// Returns the index in the node at which the key (or an equivalent) exists
